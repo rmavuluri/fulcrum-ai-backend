@@ -1,6 +1,6 @@
 # Fulcrum AI Backend
 
-Express backend for Fulcrum AI: Auth0 JWT validation and (later) MCP proxy.
+Python (Flask) backend for Fulcrum AI: Auth0 JWT validation and (later) MCP proxy.
 
 ## Auth0 setup
 
@@ -27,15 +27,23 @@ Express backend for Fulcrum AI: Auth0 JWT validation and (later) MCP proxy.
    - Set:
      - `AUTH0_DOMAIN` = your tenant domain (e.g. `tenant.us.auth0.com`).
      - `AUTH0_ISSUER_BASE_URL` = `https://<AUTH0_DOMAIN>` (or leave unset to derive from `AUTH0_DOMAIN`).
-     - `AUTH0_AUDIENCE` = your API Identifier.
+     - `AUTH0_AUDIENCE` = your API Identifier (same as the API Identifier in Auth0).
      - `FRONTEND_URL` = frontend origin (e.g. `http://localhost:5173`).
      - `PORT` = backend port (e.g. `3001`).
 
 ## Run
 
 ```bash
-npm install
-npm run dev
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python run.py
+```
+
+Or with Flask CLI:
+
+```bash
+flask --app src.app run --port 3001
 ```
 
 Backend runs at `http://localhost:3001`. Frontend should use `VITE_API_URL=http://localhost:3001`.
@@ -44,5 +52,8 @@ Backend runs at `http://localhost:3001`. Frontend should use `VITE_API_URL=http:
 
 - `GET /api/health` – health check (no auth).
 - `GET /api/auth/me` – current user from JWT (requires `Authorization: Bearer <access_token>`).
+- `POST /api/chat` – send a message to the document-aware chat (Auth required). Body: `{ "message": "..." }` or `{ "query": "..." }`. Returns `{ "response": "..." }`. Uses Claude and the MCP document server.
 
-MCP routes will be added later.
+## Chat from the UI
+
+Set `ANTHROPIC_API_KEY` and optionally `CLAUDE_MODEL` in `.env`. The UI can call `POST /api/chat` with the user’s JWT in `Authorization: Bearer <token>` and a JSON body with `message` or `query`. The backend runs one turn with the document MCP server and Claude and returns the reply.
