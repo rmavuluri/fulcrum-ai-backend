@@ -2,7 +2,7 @@ import json
 import os
 from typing import Optional, Literal, List, Any
 from mcp.types import CallToolResult, Tool, TextContent
-from src.mcp_client import MCPClient
+from src.mcp_client import MCPClient, ProgressCallback
 from anthropic.types import Message, ToolResultBlockParam
 
 # Anthropic built-in web search; API executes it server-side. Used when MCP tools don't cover the query.

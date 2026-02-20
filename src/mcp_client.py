@@ -1,6 +1,6 @@
 import sys
 import asyncio
-from typing import Optional, Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable, Optional
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
@@ -100,6 +100,42 @@ class MCPClient:
                 return json.loads(resource.text)
             return resource.text
         return resource
+
+    def _tool_result_json(self, result: types.CallToolResult) -> Any:
+        """Parse tool result content as JSON or plain text. Raises if tool reported error."""
+        if result.isError and result.content:
+            text = result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
+            raise RuntimeError(f"Tool error: {text}")
+        if not result.content:
+            return None
+        item = result.content[0]
+        if not isinstance(item, types.TextContent):
+            return None
+        text = item.text.strip()
+        if text.startswith("[") or text.startswith("{"):
+            return json.loads(text)
+        return text
+
+    async def list_files(self) -> list[dict]:
+        """List files in the MCP file store. Returns list of {id, filename}."""
+        result = await self.call_tool("list_files", {})
+        return self._tool_result_json(result) or []
+
+    async def upload_file(self, file_path: str) -> dict:
+        """Upload a file from path on the server. Returns {id, filename}."""
+        result = await self.call_tool("upload_file", {"file_path": file_path})
+        return self._tool_result_json(result)
+
+    async def delete_file(self, id: str) -> str:
+        """Delete a file by id. Returns success message."""
+        result = await self.call_tool("delete_file", {"id": id})
+        out = self._tool_result_json(result)
+        return out if isinstance(out, str) else str(out)
+
+    async def download_file(self, id: str, filename: Optional[str] = None) -> dict:
+        """Download file by id. Returns {content_base64, filename, mime_type}. Caller can decode and write to disk."""
+        result = await self.call_tool("download_file", {"id": id, "filename": filename})
+        return self._tool_result_json(result)
 
     async def cleanup(self):
         await self._exit_stack.aclose()
