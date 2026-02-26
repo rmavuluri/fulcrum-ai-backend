@@ -52,7 +52,7 @@ Backend runs at `http://localhost:3001`. Frontend should use `VITE_API_URL=http:
 
 - `GET /api/health` – health check (no auth).
 - `GET /api/auth/me` – current user from JWT (requires `Authorization: Bearer <access_token>`).
-- `POST /api/chat` – send a message to the document-aware chat (Auth required). Body: `{ "message": "..." }` or `{ "query": "..." }`. Returns `{ "response": "..." }`. Uses Claude and the MCP document server.
+- `POST /api/chat` – send a message to chat (Auth required). Body: `{ "message": "..." }` or `{ "query": "..." }`. Returns `{ "response": "..." }`. Uses Ally sandbox if `USE_ALLY_SANDBOX=1` and credentials are set; otherwise Claude and the MCP document server.
 
 ## Chat from the UI
 

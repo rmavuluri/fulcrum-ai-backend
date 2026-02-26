@@ -3,6 +3,7 @@ flask-cors>=4.0.0
 PyJWT[crypto]>=2.8.0
 python-dotenv>=1.1.0
 certifi>=2024.0.0
+requests>=2.31.0
 
 # MCP (client + FastMCP server; CLI extra for mcp tooling)
 mcp[cli]>=1.8.0

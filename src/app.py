@@ -31,8 +31,30 @@ app = Flask(__name__)
 CORS(app, origins=[FRONTEND_URL], supports_credentials=True)
 
 
+def _use_ally_sandbox() -> bool:
+    """Use Ally sandbox for chat when enabled and credentials are set."""
+    if os.getenv("USE_ALLY_SANDBOX", "").lower() not in ("1", "true", "yes"):
+        return False
+    return bool(os.getenv("SANDBOX_CLIENT_KEY") and os.getenv("SANDBOX_CLIENT_SECRET"))
+
+
+def _run_chat_turn_sandbox(query: str) -> str:
+    """Run one chat turn using the Ally sandbox API (sync)."""
+    from src.ally_sandbox import generate_bearer_token, call_sandbox
+
+    token = generate_bearer_token()
+    if not token:
+        raise RuntimeError(
+            "Ally sandbox not configured: set SANDBOX_CLIENT_KEY and SANDBOX_CLIENT_SECRET"
+        )
+    return call_sandbox(token, query)
+
+
 async def _run_chat_turn(query: str) -> str:
-    """Run one chat turn with the document MCP server and Claude."""
+    """Run one chat turn: Ally sandbox if enabled, else document MCP server + Claude."""
+    if _use_ally_sandbox():
+        return _run_chat_turn_sandbox(query)
+
     from src.mcp_client import MCPClient
     from src.core.claude import Claude
     from src.core.cli_chat import CliChat
