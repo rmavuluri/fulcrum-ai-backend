@@ -1,5 +1,5 @@
 """
-Fulcrum AI Backend — Flask app: Auth0 JWT validation and API routes.
+Fulcrum AI Backend — Flask app: API routes. Frontend gets sandbox token and calls APIs with it.
 """
 import asyncio
 import os
@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Use certifi CA bundle for HTTPS (Auth0 JWKS, Anthropic API); fixes SSL errors on macOS
+# Use certifi CA bundle for HTTPS (Ally API, etc.); fixes SSL errors on macOS
 try:
     import certifi
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
@@ -15,15 +15,13 @@ try:
 except ImportError:
     pass
 
-from flask import Flask, jsonify, g, request
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-
-from .auth import require_auth, Auth0NotConfiguredError, InvalidTokenError
 
 PORT = int(os.getenv("PORT", "3001"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-# MCP document server (for /api/chat)
+# MCP document server (for /api/chat when not using sandbox)
 MCP_SERVER_COMMAND = os.getenv("MCP_SERVER_COMMAND", "uv")
 MCP_SERVER_ARGS = os.getenv("MCP_SERVER_ARGS", "run,src/mcp_server.py").split(",")
 
@@ -38,11 +36,12 @@ def _use_ally_sandbox() -> bool:
     return bool(os.getenv("SANDBOX_CLIENT_KEY") and os.getenv("SANDBOX_CLIENT_SECRET"))
 
 
-def _run_chat_turn_sandbox(query: str) -> str:
-    """Run one chat turn using the Ally sandbox API (sync)."""
+def _run_chat_turn_sandbox(query: str, token: str | None = None) -> str:
+    """Run one chat turn using the Ally sandbox API. Uses token if provided, else generates one."""
     from src.ally_sandbox import generate_bearer_token, call_sandbox
 
-    token = generate_bearer_token()
+    if not token:
+        token = generate_bearer_token()
     if not token:
         raise RuntimeError(
             "Ally sandbox not configured: set SANDBOX_CLIENT_KEY and SANDBOX_CLIENT_SECRET"
@@ -50,10 +49,10 @@ def _run_chat_turn_sandbox(query: str) -> str:
     return call_sandbox(token, query)
 
 
-async def _run_chat_turn(query: str) -> str:
-    """Run one chat turn: Ally sandbox if enabled, else document MCP server + Claude."""
+async def _run_chat_turn(query: str, sandbox_token: str | None = None) -> str:
+    """Run one chat turn: Ally sandbox if enabled (using sandbox_token if provided), else MCP + Claude."""
     if _use_ally_sandbox():
-        return _run_chat_turn_sandbox(query)
+        return _run_chat_turn_sandbox(query, token=sandbox_token)
 
     from src.mcp_client import MCPClient
     from src.core.claude import Claude
@@ -70,7 +69,9 @@ async def _run_chat_turn(query: str) -> str:
 
 
 async def _list_docs() -> list[str]:
-    """Return list of document IDs from the MCP document server."""
+    """Return list of document IDs. When using Ally sandbox, returns [] (no MCP docs)."""
+    if _use_ally_sandbox():
+        return []
     from src.mcp_client import MCPClient
     from src.core.claude import Claude
     from src.core.cli_chat import CliChat
@@ -89,10 +90,29 @@ def health():
     return jsonify(status="ok")
 
 
+@app.route("/api/sandbox-token", methods=["GET"])
+def sandbox_token():
+    """
+    Return an Ally sandbox bearer token for the frontend.
+    Frontend should call this first, then send Authorization: Bearer <token> on /api/chat and other endpoints.
+    """
+    from src.ally_sandbox import generate_bearer_token
+
+    if not _use_ally_sandbox():
+        return jsonify(error="Ally sandbox not enabled: set USE_ALLY_SANDBOX and credentials"), 503
+
+    token = generate_bearer_token()
+    if not token:
+        return jsonify(error="Failed to get sandbox token; check SANDBOX_CLIENT_KEY and SANDBOX_CLIENT_SECRET"), 503
+
+    # Ally typically returns expires_in (seconds); default 1 hour
+    expires_in = 3600
+    return jsonify(access_token=token, expires_in=expires_in)
+
+
 @app.route("/api/documents", methods=["GET"])
-@require_auth
 def list_documents():
-    """Return list of document IDs (for @-mentions). Auth required."""
+    """Return list of document IDs (for @-mentions). Optional: send Authorization: Bearer <sandbox_token>."""
     try:
         doc_ids = asyncio.run(_list_docs())
         return jsonify(documents=doc_ids)
@@ -101,56 +121,31 @@ def list_documents():
 
 
 @app.route("/api/chat", methods=["POST"])
-@require_auth
 def chat():
-    """Accept { \"message\": \"...\" } or { \"query\": \"...\" }, return { \"response\": \"...\" }. Auth required."""
+    """
+    Chat. Body: { "message": "..." } or { "query": "..." }. Returns { "response": "..." }.
+    Send Authorization: Bearer <sandbox_token> (get token from GET /api/sandbox-token).
+    """
     body = request.get_json(silent=True) or {}
     message = body.get("message") or body.get("query") or ""
     message = message.strip()
     if not message:
         return jsonify(error="Missing message or query"), 400
+
+    auth_header = request.headers.get("Authorization")
+    sandbox_token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        sandbox_token = auth_header[7:].strip()
+
     try:
-        response = asyncio.run(_run_chat_turn(message))
+        response = asyncio.run(_run_chat_turn(message, sandbox_token=sandbox_token))
         return jsonify(response=response)
     except Exception as e:
         return jsonify(error=str(e)), 500
 
 
-@app.route("/api/auth/me", methods=["GET"])
-@require_auth
-def auth_me():
-    claims = g.auth_payload
-    audience = os.getenv("AUTH0_AUDIENCE", "")
-    email = claims.get("email") or claims.get(f"{audience}email")
-    name = claims.get("name") or claims.get(f"{audience}name")
-    return jsonify(
-        user={
-            "id": claims.get("sub"),
-            "email": email,
-            "name": name,
-        }
-    )
-
-
-@app.errorhandler(Auth0NotConfiguredError)
-def handle_auth0_not_configured(err):
-    return jsonify(error="Auth0 not configured"), 503
-
-
-@app.errorhandler(InvalidTokenError)
-def handle_invalid_token(err):
-    return jsonify(error="Invalid or expired token"), 401
-
-
-@app.errorhandler(401)
-def handle_401(err):
-    return jsonify(error="Invalid or expired token"), 401
-
-
 @app.errorhandler(Exception)
 def handle_generic(err):
-    if getattr(err, "code", None) == "invalid_token":
-        return jsonify(error="Invalid or expired token"), 401
     message = getattr(err, "message", None) or str(err) or "Internal server error"
     return jsonify(error=message), 500
 
